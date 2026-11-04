@@ -191,7 +191,14 @@ class GGUFModelLoader(BaseModelLoader):
             list(plan.files.all_files),
             plan.name_map,
         )
-        return adapter.transform_weights(weights, model_config)
+        yield from adapter.transform_weights(weights, model_config)
+        if model_config.hf_config.model_type in ("qwen4_exp", "qwen4_exp_text"):
+            # PLE is not a standard GGUF vocab module. Decode its existing
+            # quantized rows in bounded CPU chunks into native checkpoint
+            # shards consumed synchronously by vLLM's pinned-host PLE loader.
+            from .qwen4_ple import iter_qwen4_ple_weights
+
+            yield from iter_qwen4_ple_weights(plan.files.backbone, model_config)
 
     def download_model(self, model_config: ModelConfig) -> None:
         self._prepare_model_files(model_config)

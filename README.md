@@ -1,5 +1,9 @@
 # vLLM GGUF Quantization Plugin
 
+This development branch contains a [Qwen4Exp text-only checkpoint](docs/qwen4exp-checkpoint.md)
+and related compatibility fixes. It is an experimental fork checkpoint, not an
+upstream release or a claim of general Qwen4 support.
+
 This plugin provides out-of-tree GGUF quantization support for vLLM after
 in-tree support deprecation
 ([vllm-project/vllm#39583](https://github.com/vllm-project/vllm/issues/39583)).

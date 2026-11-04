@@ -19,6 +19,10 @@ def _package_version() -> str:
 
 
 def _should_build_extension() -> bool:
+    # Isolated correctness prototype can use the upstream Triton fallback.
+    # A later native HIP wheel is built/tested separately.
+    if os.environ.get("VLLM_GGUF_SKIP_EXTENSION") == "1":
+        return False
     packaging_commands = {"sdist", "egg_info", "dist_info"}
     return not any(command in packaging_commands for command in sys.argv[1:])
 

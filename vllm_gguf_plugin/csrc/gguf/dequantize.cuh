@@ -399,14 +399,21 @@ static __global__ void dequantize_block_iq1_m(const void * __restrict__ vx, dst_
 }
 
 template<typename dst_t>
-static __global__ void dequantize_block_iq4_nl(const void * __restrict__ vx, dst_t * __restrict__ yy) {
+static __global__ void dequantize_block_iq4_nl(const void * __restrict__ vx, dst_t * __restrict__ yy,
+                                             const int64_t k) {
 
-    const auto i   = blockIdx.x;
-    const block_iq4_nl * x = (const block_iq4_nl *) vx + i*(QK_K/QK4_NL);
-
+    const int64_t i = blockIdx.x;
     const auto tid = threadIdx.x;
     const int il = tid/8; // 0...3
     const int ib = tid%8; // 0...7
+
+    // IQ4_NL has whole 32-value blocks, but a selected row (e.g. width 160)
+    // need not fill this kernel's 256-value launch block. Guard before reads.
+    if (i*QK_K + QK4_NL*ib >= k) {
+        return;
+    }
+
+    const block_iq4_nl * x = (const block_iq4_nl *) vx + i*(QK_K/QK4_NL);
     dst_t * y = yy + i*QK_K + 32*ib + 4*il;
     const uint8_t  * q4 = x[ib].qs + 4*il;
     const float d = __half2float(x[ib].d);
@@ -514,8 +521,11 @@ static void dequantize_row_iq1_m_cuda(const void * vx, dst_t * y, const int64_t 
 
 template<typename dst_t>
 static void dequantize_row_iq4_nl_cuda(const void * vx, dst_t * y, const int64_t k, cudaStream_t stream) {
+    if (k == 0) {
+        return;
+    }
     const int nb = (k + QK_K - 1) / QK_K;
-    dequantize_block_iq4_nl<<<nb, 32, 0, stream>>>(vx, y);
+    dequantize_block_iq4_nl<<<nb, 32, 0, stream>>>(vx, y, k);
 }
 
 template<typename dst_t>
