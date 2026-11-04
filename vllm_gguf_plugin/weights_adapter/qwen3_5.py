@@ -11,6 +11,7 @@ import gguf
 import torch
 from vllm.logger import init_logger
 from vllm.model_executor.models.utils import WeightsMapper
+
 try:
     from vllm.transformers_utils.configs.qwen3_5 import Qwen3_5Config
     from vllm.transformers_utils.configs.qwen3_5_moe import Qwen3_5MoeConfig

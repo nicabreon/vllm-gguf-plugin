@@ -22,7 +22,6 @@ import gguf
 import numpy as np
 import torch
 
-
 PLE_TENSOR_NAME = "per_layer_token_embd.weight"
 DEFAULT_ROW_CHUNK = 65536
 MAX_SHARD_BYTES = 1 << 30
@@ -53,7 +52,11 @@ def _text_config(model_config: Any) -> Any:
 
 
 def _positive_int(value: Any, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, np.integer))
+        or value <= 0
+    ):
         raise ValueError(f"{name} must be a positive integer, got {value!r}")
     return int(value)
 
@@ -131,27 +134,39 @@ def qwen4_ple_layout(model_config: Any) -> Qwen4PLELayout:
     config = _text_config(model_config)
     layer_ids = _value(config, "ple_layer_ids")
     if not isinstance(layer_ids, (list, tuple)) or len(layer_ids) != 1:
-        raise ValueError("packed Qwen4 PLE currently requires exactly one ple_layer_ids entry")
+        raise ValueError(
+            "packed Qwen4 PLE currently requires exactly one ple_layer_ids entry"
+        )
     layer_id = _positive_int(layer_ids[0], "ple_layer_ids[0]") - 1
     ngram_size = _positive_int(_value(config, "ngram_size"), "ngram_size")
     if ngram_size < 2:
         raise ValueError("ngram_size must be at least 2")
-    heads_per_ngram = _positive_int(_value(config, "heads_per_ngram"), "heads_per_ngram")
+    heads_per_ngram = _positive_int(
+        _value(config, "heads_per_ngram"), "heads_per_ngram"
+    )
     heads = (ngram_size - 1) * heads_per_ngram
     ple_dim = _positive_int(_value(config, "ple_embed_dim"), "ple_embed_dim")
     if ple_dim % heads:
         raise ValueError("ple_embed_dim must be divisible by the number of ngram heads")
     embedding_dim = ple_dim // heads
     if embedding_dim % 32:
-        raise ValueError("IQ4_NL PLE rows must contain a whole number of 32-value blocks")
+        raise ValueError(
+            "IQ4_NL PLE rows must contain a whole number of 32-value blocks"
+        )
     if _value(config, "ple_embedding_dtype") is not None:
-        raise ValueError("BF16 PLE conversion requires ple_embedding_dtype=None in native config")
+        raise ValueError(
+            "BF16 PLE conversion requires ple_embedding_dtype=None in native config"
+        )
     divisor = _positive_int(
         _value(config, "make_ngram_vocab_size_divisible_by"),
         "make_ngram_vocab_size_divisible_by",
     )
-    num_shards = _positive_int(_value(config, "split_ngram_parts", 512), "split_ngram_parts")
-    base = _positive_int(_value(config, "ngram_vocab_size_base"), "ngram_vocab_size_base")
+    num_shards = _positive_int(
+        _value(config, "split_ngram_parts", 512), "split_ngram_parts"
+    )
+    base = _positive_int(
+        _value(config, "ngram_vocab_size_base"), "ngram_vocab_size_base"
+    )
     sizes = _head_vocab_sizes(base, heads)
     offsets, rows = [], 0
     for size in sizes:
@@ -197,7 +212,9 @@ def qwen4_ple_prefix(model_config: Any) -> str:
 
 
 def _field_value(readers: Sequence[Any], name: str) -> Any:
-    values = [reader.fields[name].contents() for reader in readers if name in reader.fields]
+    values = [
+        reader.fields[name].contents() for reader in readers if name in reader.fields
+    ]
     if not values:
         raise ValueError(f"required GGUF metadata is missing: {name}")
     if any(value != values[0] for value in values[1:]):
@@ -269,7 +286,9 @@ def iter_qwen4_ple_weights(
         if tensor.name == PLE_TENSOR_NAME
     ]
     if len(matches) != 1:
-        raise ValueError(f"expected exactly one packed PLE tensor, found {len(matches)}")
+        raise ValueError(
+            f"expected exactly one packed PLE tensor, found {len(matches)}"
+        )
     tensor = matches[0]
     expected_shape = (layout.embedding_dim, layout.total_rows)
     if tuple(int(value) for value in tensor.shape) != expected_shape:
@@ -284,7 +303,11 @@ def iter_qwen4_ple_weights(
     if int(tensor.n_bytes) != expected_bytes:
         raise ValueError("packed PLE byte count does not match the validated shape")
     packed = np.asarray(tensor.data)
-    if packed.dtype != np.uint8 or not packed.flags.c_contiguous or packed.size != expected_bytes:
+    if (
+        packed.dtype != np.uint8
+        or not packed.flags.c_contiguous
+        or packed.size != expected_bytes
+    ):
         raise ValueError("packed PLE data must be a contiguous uint8 memory-map view")
     packed = packed.reshape(layout.total_rows, row_bytes)
 
@@ -293,7 +316,10 @@ def iter_qwen4_ple_weights(
         ("ngram_heads_offsets", layout.head_offsets),
         ("ngram_heads_vocab_sizes", layout.head_vocab_sizes),
     ):
-        yield f"{layout.prefix}.{suffix}", torch.tensor(values, dtype=torch.int64, device="cpu")
+        yield (
+            f"{layout.prefix}.{suffix}",
+            torch.tensor(values, dtype=torch.int64, device="cpu"),
+        )
 
     # Allocate once: retaining the previous yielded tuple while requesting the
     # next item must not cause two simultaneous model-sized shard allocations.

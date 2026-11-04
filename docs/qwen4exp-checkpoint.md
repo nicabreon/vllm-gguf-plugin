@@ -6,6 +6,10 @@ It starts from plugin commit `e454affe0ca23c9dc8754ec3033270cb30622ed5` and targ
 the native Qwen4Exp implementation in vLLM commit
 `5689c2790c911a55c75825aac5166305df0b591d`.
 
+AI assistance from Codex was used to develop this checkpoint. Human review of
+every changed line and the relevant validation is required before any upstream
+submission. This fork checkpoint does not claim that review is complete.
+
 ## Scope
 
 - Map the checkpoint's GDN, hyperconnection, sparse-attention indexer, experts
@@ -72,3 +76,20 @@ check is skipped unless its external inventory and config are supplied.
 No model weights, credentials, deployment logs or private configuration are
 included in this branch. Further work before an upstream PR includes portable
 CI coverage, native-kernel regression tests and review against current upstream.
+
+## Upstream contribution preparation
+
+The [vLLM contribution guide](https://docs.vllm.ai/en/latest/contributing/)
+permits AI-assisted contributions with human accountability, AI disclosure and
+commit attribution. It requires DCO sign-off for vLLM contributions. The human
+submitter must review the final diff and certify their own DCO agreement; this
+checkpoint does not add that certification on their behalf.
+
+The plugin's pinned `.pre-commit-config.yaml` provides Ruff, typos, clang-format,
+Markdown lint and filename checks. These are separate from model and kernel
+validation. The fork is a work checkpoint, and no upstream PR has been opened.
+
+Before proposing a PR, resolve overlap with existing upstream work. In
+particular, [plugin PR 131](https://github.com/vllm-project/vllm-gguf-plugin/pull/131)
+already addresses quantization companion names containing `weight`. The model
+adapter and independent kernel fixes should be reviewed as focused changes.

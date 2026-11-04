@@ -15,16 +15,15 @@ import copy
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import shutil
 import sys
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import gguf
 import numpy as np
 import torch
-
 
 SOURCE = Path(__file__).resolve().parents[1] / "vllm_gguf_plugin" / "qwen4_ple.py"
 SPEC = importlib.util.spec_from_file_location("qwen4_ple_standalone", SOURCE)
@@ -73,7 +72,11 @@ def packed_fixture(rows=88):
         [0.0, -0.0, 1.0, -0.25, 2.0**-24, 2.0**-14, 16.0, 65504.0], dtype="<f2"
     )
     raw[:, :2] = np.resize(scales, blocks).view(np.uint8).reshape(blocks, 2)
-    raw[:, 2:] = (np.arange(blocks * 16, dtype=np.uint64) * 37 % 256).astype(np.uint8).reshape(blocks, 16)
+    raw[:, 2:] = (
+        (np.arange(blocks * 16, dtype=np.uint64) * 37 % 256)
+        .astype(np.uint8)
+        .reshape(blocks, 16)
+    )
     return raw.reshape(rows, 90)
 
 
@@ -84,7 +87,9 @@ def write_gguf(path, *, metadata=None, packed=None, quant_type=None):
             # GGUF0.19 infers Python-int arrays as INT32, while native PLE hash
             # multipliers deliberately exceed 2**31. Preserve their exact bits.
             writer.add_key_value(
-                key, value, gguf.GGUFValueType.ARRAY,
+                key,
+                value,
+                gguf.GGUFValueType.ARRAY,
                 sub_type=gguf.GGUFValueType.UINT64,
             )
         else:
@@ -105,31 +110,45 @@ def write_gguf(path, *, metadata=None, packed=None, quant_type=None):
 def main():
     checks = []
     layout = PLE.qwen4_ple_layout(SMALL_CONFIG)
-    assert (layout.prefix, layout.embedding_dim, layout.total_rows, layout.shard_rows) == (
-        PREFIX, 160, 88, 30
-    )
+    assert (
+        layout.prefix,
+        layout.embedding_dim,
+        layout.total_rows,
+        layout.shard_rows,
+    ) == (PREFIX, 160, 88, 30)
     assert list(layout.layer_multipliers) == GOLDEN_MULTIPLIERS
     assert list(layout.head_vocab_sizes) == [17, 19, 23, 29]
-    checks.append("native geometry/hash buffers match fixed independent small-config goldens")
+    checks.append(
+        "native geometry/hash buffers match fixed independent small-config goldens"
+    )
 
     config_wrapper = SimpleNamespace(hf_text_config=SimpleNamespace(**SMALL_CONFIG))
     assert PLE.qwen4_ple_layout(config_wrapper) == layout
     hf_wrapper = SimpleNamespace(
-        hf_config=SimpleNamespace(get_text_config=lambda: SimpleNamespace(**SMALL_CONFIG))
+        hf_config=SimpleNamespace(
+            get_text_config=lambda: SimpleNamespace(**SMALL_CONFIG)
+        )
     )
     assert PLE.qwen4_ple_layout(hf_wrapper) == layout
     checks.append("ModelConfig.hf_text_config and HF get_text_config inputs supported")
 
-    production = dict(SMALL_CONFIG, heads_per_ngram=8, ple_embed_dim=2560,
-                      ngram_vocab_size_base=20000000, make_ngram_vocab_size_divisible_by=128,
-                      split_ngram_parts=128)
+    production = dict(
+        SMALL_CONFIG,
+        heads_per_ngram=8,
+        ple_embed_dim=2560,
+        ngram_vocab_size_base=20000000,
+        make_ngram_vocab_size_divisible_by=128,
+        split_ngram_parts=128,
+    )
     production_layout = PLE.qwen4_ple_layout(production)
     assert production_layout.total_rows == 320001536
     assert production_layout.shard_rows == 2500012
     assert production_layout.embedding_dim == 160
     assert production_layout.shard_bytes == 800003840
     assert production_layout.total_rows * 160 * 2 == 102400491520
-    checks.append("exact production128-shard geometry checked without allocating its table")
+    checks.append(
+        "exact production128-shard geometry checked without allocating its table"
+    )
 
     packed = packed_fixture()
     reference = gguf.dequantize(packed, gguf.GGMLQuantizationType.IQ4_NL)
@@ -138,8 +157,13 @@ def main():
     # Explicit row160 and awkward row boundaries, independently dequantized.
     for start, end in [(0, 1), (1, 2), (7, 9), (29, 31), (59, 61), (87, 88)]:
         part = PLE._decode_iq4_nl_rows(packed[start:end], 160)
-        np.testing.assert_array_equal(part.view(np.uint32), reference[start:end].view(np.uint32))
-    checks.append("IQ4_NL F32 decode matches gguf reference bitwise, including row160 and boundary slices")
+        np.testing.assert_array_equal(
+            part.view(np.uint32), reference[start:end].view(np.uint32)
+        )
+    checks.append(
+        "IQ4_NL F32 decode matches gguf reference bitwise, "
+        "including row160 and boundary slices"
+    )
 
     with tempfile.TemporaryDirectory(prefix="qwen4-ple-cpu-") as temporary:
         root = Path(temporary)
@@ -152,7 +176,9 @@ def main():
         for row_chunk in (1, 7, 16, 31, PLE.DEFAULT_ROW_CHUNK):
             outputs, pointers, names = [], [], []
             buffers = {}
-            for name, value in PLE.iter_qwen4_ple_weights(files, config_wrapper, row_chunk=row_chunk):
+            for name, value in PLE.iter_qwen4_ple_weights(
+                files, config_wrapper, row_chunk=row_chunk
+            ):
                 assert value.device.type == "cpu"
                 if value.dtype == torch.int64:
                     buffers[name] = value.tolist()
@@ -160,54 +186,148 @@ def main():
                 assert value.dtype == torch.bfloat16
                 pointers.append(value.data_ptr())
                 names.append(name)
-                outputs.append(value.clone())  # The documented native-loader copy contract.
+                outputs.append(
+                    value.clone()
+                )  # The documented native-loader copy contract.
             assert buffers == {
                 PREFIX + ".layer_multipliers": GOLDEN_MULTIPLIERS,
                 PREFIX + ".ngram_heads_offsets": [0, 17, 36, 59],
                 PREFIX + ".ngram_heads_vocab_sizes": [17, 19, 23, 29],
             }
-            assert names == [PREFIX + f".ngram_embedding.shard_{index}.weight" for index in range(3)]
-            assert [tuple(tensor.shape) for tensor in outputs] == [(30, 160), (30, 160), (28, 160)]
-            assert len(set(pointers)) == 1, "must reuse exactly one BF16 shard allocation"
-            assert torch.equal(torch.cat(outputs).view(torch.int16), expected_bf16.view(torch.int16))
-        assert hashes == {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
-        checks.append("real metadata-only+packed GGUF files stream exact BF16 native shards at five chunk sizes")
-        checks.append("one reusable shard allocation; native names, tail rows and INT64 buffers correct")
+            assert names == [
+                PREFIX + f".ngram_embedding.shard_{index}.weight" for index in range(3)
+            ]
+            assert [tuple(tensor.shape) for tensor in outputs] == [
+                (30, 160),
+                (30, 160),
+                (28, 160),
+            ]
+            assert len(set(pointers)) == 1, (
+                "must reuse exactly one BF16 shard allocation"
+            )
+            assert torch.equal(
+                torch.cat(outputs).view(torch.int16), expected_bf16.view(torch.int16)
+            )
+        assert hashes == {
+            path: hashlib.sha256(path.read_bytes()).hexdigest() for path in files
+        }
+        checks.append(
+            "real metadata-only+packed GGUF files stream exact BF16 native shards "
+            "at five chunk sizes"
+        )
+        checks.append(
+            "one reusable shard allocation; native names, tail rows "
+            "and INT64 buffers correct"
+        )
         checks.append("source GGUF bytes remain unchanged")
 
         for invalid in (0, -1, True):
-            assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights(files, SMALL_CONFIG, row_chunk=invalid)), "row_chunk")
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights(files, SMALL_CONFIG, row_chunk=1000000)), "FP32")
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights(str(weights_file), SMALL_CONFIG)), "nonempty sequence")
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights([weights_file, weights_file], SMALL_CONFIG)), "duplicate GGUF")
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights([weights_file], SMALL_CONFIG)), "metadata is missing")
-        checks.append("invalid chunk budgets, duplicate/missing paths and missing metadata rejected before allocation")
+            assert_rejected(
+                lambda invalid=invalid: next(
+                    PLE.iter_qwen4_ple_weights(files, SMALL_CONFIG, row_chunk=invalid)
+                ),
+                "row_chunk",
+            )
+        assert_rejected(
+            lambda: next(
+                PLE.iter_qwen4_ple_weights(files, SMALL_CONFIG, row_chunk=1000000)
+            ),
+            "FP32",
+        )
+        assert_rejected(
+            lambda: next(PLE.iter_qwen4_ple_weights(str(weights_file), SMALL_CONFIG)),
+            "nonempty sequence",
+        )
+        assert_rejected(
+            lambda: next(
+                PLE.iter_qwen4_ple_weights([weights_file, weights_file], SMALL_CONFIG)
+            ),
+            "duplicate GGUF",
+        )
+        assert_rejected(
+            lambda: next(PLE.iter_qwen4_ple_weights([weights_file], SMALL_CONFIG)),
+            "metadata is missing",
+        )
+        checks.append(
+            "invalid chunk budgets, duplicate/missing paths and missing metadata "
+            "rejected before allocation"
+        )
 
         bad_metadata = copy.deepcopy(GOLDEN_METADATA)
         bad_metadata["qwen4exp.ple.head_offsets"][1] += 1
         bad_meta_file = root / "bad-metadata.gguf"
         write_gguf(bad_meta_file, metadata=bad_metadata)
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights([bad_meta_file, weights_file], SMALL_CONFIG)), "head_offsets")
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights([metadata_file, bad_meta_file, weights_file], SMALL_CONFIG)), "disagree")
+        assert_rejected(
+            lambda: next(
+                PLE.iter_qwen4_ple_weights([bad_meta_file, weights_file], SMALL_CONFIG)
+            ),
+            "head_offsets",
+        )
+        assert_rejected(
+            lambda: next(
+                PLE.iter_qwen4_ple_weights(
+                    [metadata_file, bad_meta_file, weights_file], SMALL_CONFIG
+                )
+            ),
+            "disagree",
+        )
         duplicate_file = root / "duplicate.gguf"
         shutil.copyfile(weights_file, duplicate_file)
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights([metadata_file, weights_file, duplicate_file], SMALL_CONFIG)), "exactly one")
+        assert_rejected(
+            lambda: next(
+                PLE.iter_qwen4_ple_weights(
+                    [metadata_file, weights_file, duplicate_file], SMALL_CONFIG
+                )
+            ),
+            "exactly one",
+        )
         wrong_shape = root / "wrong-shape.gguf"
         write_gguf(wrong_shape, packed=packed_fixture(87))
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights([metadata_file, wrong_shape], SMALL_CONFIG)), "shape mismatch")
+        assert_rejected(
+            lambda: next(
+                PLE.iter_qwen4_ple_weights([metadata_file, wrong_shape], SMALL_CONFIG)
+            ),
+            "shape mismatch",
+        )
         wrong_type = root / "wrong-type.gguf"
         write_gguf(wrong_type, packed=packed, quant_type=gguf.GGMLQuantizationType.Q4_0)
-        assert_rejected(lambda: next(PLE.iter_qwen4_ple_weights([metadata_file, wrong_type], SMALL_CONFIG)), "must use IQ4_NL")
-        checks.append("wrong/conflicting metadata, duplicate PLE tensors and shape/type mismatches rejected")
+        assert_rejected(
+            lambda: next(
+                PLE.iter_qwen4_ple_weights([metadata_file, wrong_type], SMALL_CONFIG)
+            ),
+            "must use IQ4_NL",
+        )
+        checks.append(
+            "wrong/conflicting metadata, duplicate PLE tensors "
+            "and shape/type mismatches rejected"
+        )
 
-    assert_rejected(lambda: PLE.qwen4_ple_layout(dict(SMALL_CONFIG, ple_layer_ids=[1, 2])), "exactly one")
-    assert_rejected(lambda: PLE.qwen4_ple_layout(dict(SMALL_CONFIG, ple_embedding_dtype="float8_e4m3fn")), "requires ple_embedding_dtype=None")
-    checks.append("ambiguous multi-PLE or non-BF16 native storage configuration rejected")
-    print(json.dumps({
-        "ok": True, "checks": checks, "count": len(checks),
-        "gpu_execution": False, "checkpoint_downloads": False,
-        "production_table_allocated": False,
-    }, indent=2))
+    assert_rejected(
+        lambda: PLE.qwen4_ple_layout(dict(SMALL_CONFIG, ple_layer_ids=[1, 2])),
+        "exactly one",
+    )
+    assert_rejected(
+        lambda: PLE.qwen4_ple_layout(
+            dict(SMALL_CONFIG, ple_embedding_dtype="float8_e4m3fn")
+        ),
+        "requires ple_embedding_dtype=None",
+    )
+    checks.append(
+        "ambiguous multi-PLE or non-BF16 native storage configuration rejected"
+    )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "checks": checks,
+                "count": len(checks),
+                "gpu_execution": False,
+                "checkpoint_downloads": False,
+                "production_table_allocated": False,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

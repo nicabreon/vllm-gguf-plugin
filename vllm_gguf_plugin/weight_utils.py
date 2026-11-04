@@ -190,7 +190,10 @@ def gguf_quant_weights_iterator_multi(
             if weight_type.name not in _QUANT_TYPES:
                 # Only the parameter suffix changes. Module names can contain
                 # 'weight', e.g. HyperConnection input_mix_weight_down.
-                yield name.removesuffix(".weight") + ".weight_type", torch.tensor(weight_type)
+                yield (
+                    name.removesuffix(".weight") + ".weight_type",
+                    torch.tensor(weight_type),
+                )
 
             weight = tensor.data
             if weight_type.name == "BF16" and weight.dtype == np.uint8:

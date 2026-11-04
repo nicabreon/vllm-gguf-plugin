@@ -126,18 +126,21 @@ def expected_qwen4_tensor_names(text_config) -> set[str]:
         raise ValueError("Qwen4Exp layer_types length does not match num_hidden_layers")
     ple_layers = {int(layer) - 1 for layer in text_config.ple_layer_ids}
     for index, layer_type in enumerate(layer_types):
-        suffixes = {
-            name for name in _LAYER_NAMES
-            if name.startswith(("ffn_", "hc_"))
-        }
+        suffixes = {name for name in _LAYER_NAMES if name.startswith(("ffn_", "hc_"))}
         if layer_type == "linear_attention":
             suffixes |= {
-                name for name in _LAYER_NAMES
+                name
+                for name in _LAYER_NAMES
                 if name.startswith("ssm_") and name != "ssm_a.weight"
             } | {"attn_qkv.weight", "attn_gate.weight"}
-        elif layer_type in ("full_attention", "indexed_attention", "qwen_sparse_attention"):
+        elif layer_type in (
+            "full_attention",
+            "indexed_attention",
+            "qwen_sparse_attention",
+        ):
             suffixes |= {
-                name for name in _LAYER_NAMES
+                name
+                for name in _LAYER_NAMES
                 if name.startswith(("attn_", "indexer."))
                 and name not in ("attn_qkv.weight", "attn_gate.weight")
             }
@@ -199,7 +202,9 @@ class Qwen4ExpGGUFAdapter(BaseGGUFWeightsAdapter):
         self, files: GGUFModelFiles, hf_config: PretrainedConfig
     ) -> PretrainedConfig:
         if files.mm_proj is not None:
-            raise NotImplementedError("Qwen4Exp GGUF adapter currently supports text only")
+            raise NotImplementedError(
+                "Qwen4Exp GGUF adapter currently supports text only"
+            )
         text = hf_config.get_text_config()
         # The checkpoint names full attention 'full_attention'; recent vLLM
         # names Qwen4Exp sparse full-attention layers 'indexed_attention'.
@@ -231,7 +236,8 @@ class Qwen4ExpGGUFAdapter(BaseGGUFWeightsAdapter):
         # Some GGUF writers append .weight to the state-space A tensor.
         missing = expected - names
         missing = {
-            name for name in missing
+            name
+            for name in missing
             if not (name.endswith(".ssm_a") and name + ".weight" in names)
         }
         if missing:
@@ -251,7 +257,9 @@ class Qwen4ExpGGUFAdapter(BaseGGUFWeightsAdapter):
         return mapped
 
     def get_linear_layouts(
-        self, files: GGUFModelFiles, model_config: ModelConfig,
+        self,
+        files: GGUFModelFiles,
+        model_config: ModelConfig,
         name_map: dict[str, str],
     ) -> dict[str, GGUFLinearLayout]:
         del files
@@ -266,8 +274,11 @@ class Qwen4ExpGGUFAdapter(BaseGGUFWeightsAdapter):
 
     @staticmethod
     def _restore_gdn(
-        name: str, weight: torch.Tensor, text_config,
-        layout: GGUFHeadTilingLayout | None, quantized_bases: set[str],
+        name: str,
+        weight: torch.Tensor,
+        text_config,
+        layout: GGUFHeadTilingLayout | None,
+        quantized_bases: set[str],
     ) -> torch.Tensor:
         base = name.removesuffix(".weight")
         if base.endswith(".A_log"):
@@ -288,7 +299,8 @@ class Qwen4ExpGGUFAdapter(BaseGGUFWeightsAdapter):
         elif base.endswith(("linear_attn.in_proj_qkv", "linear_attn.conv1d")):
             qk_rows = (
                 int(text_config.linear_key_head_dim)
-                * int(text_config.linear_num_key_heads) * 2
+                * int(text_config.linear_num_key_heads)
+                * 2
             )
             value = layout.weight_to_vllm(weight[qk_rows:], dim=0)
             return torch.cat([weight[:qk_rows], value], dim=0)
@@ -331,31 +343,44 @@ class Qwen4ExpGGUFAdapter(BaseGGUFWeightsAdapter):
                     if len(parts) == 2:
                         q, k = parts["q"], parts["k"]
                         if q.ndim != 2 or k.ndim != 2 or q.shape[1] != k.shape[1]:
-                            raise ValueError(f"Invalid Qwen4Exp indexer Q/K shapes: {name}")
-                        yield f"{index[1]}.index_qk_proj.weight", torch.cat([q, k], dim=0)
+                            raise ValueError(
+                                f"Invalid Qwen4Exp indexer Q/K shapes: {name}"
+                            )
+                        yield (
+                            f"{index[1]}.index_qk_proj.weight",
+                            torch.cat([q, k], dim=0),
+                        )
                         del index_parts[index[1]]
                     continue
                 weight = self._restore_gdn(name, weight, text, layout, quantized_bases)
                 if (
                     name.endswith("norm.weight")
                     and not name.endswith("linear_attn.norm.weight")
-                ) or name.endswith((
-                    ".ple.norm_key.weight",
-                    ".ple.norm_query.weight",
-                    ".ple.norm_conv.weight",
-                )):
+                ) or name.endswith(
+                    (
+                        ".ple.norm_key.weight",
+                        ".ple.norm_query.weight",
+                        ".ple.norm_conv.weight",
+                    )
+                ):
                     weight = weight - 1
                 if name.endswith("conv1d.weight") and weight.ndim == 2:
                     weight = weight.unsqueeze(1)
                 elif (
-                    name.endswith(".weight") and weight.ndim == 1
-                    and "norm" not in name and base not in quantized_bases
+                    name.endswith(".weight")
+                    and weight.ndim == 1
+                    and "norm" not in name
+                    and base not in quantized_bases
                 ):
                     weight = weight.unsqueeze(0)
                 yield name, weight
             if hc_types:
-                raise ValueError(f"Missing packed Qwen4Exp HC weights: {sorted(hc_types)}")
+                raise ValueError(
+                    f"Missing packed Qwen4Exp HC weights: {sorted(hc_types)}"
+                )
             if index_parts:
-                raise ValueError(f"Missing Qwen4Exp indexer Q/K half: {sorted(index_parts)}")
+                raise ValueError(
+                    f"Missing Qwen4Exp indexer Q/K half: {sorted(index_parts)}"
+                )
 
         yield from split_stacked_experts(transformed())
